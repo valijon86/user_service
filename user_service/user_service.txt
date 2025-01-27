@@ -1,0 +1,140 @@
+create or replace package user_service is
+    p_table_name varchar2(200) := 'pr_users';
+    p_username_col varchar2(200);
+    p_password_col varchar2(200);
+    procedure reg_user (
+        p_username       in   varchar2,
+        p_password       in   varchar2,
+        p_table_name     in   varchar2,
+        p_username_col   in   varchar2,
+        p_password_col   in   varchar2
+    ); -- процедура регистрации пользователя
+
+    function hash_function (
+        p_password in varchar2
+    ) return varchar2; -- Функция хэширования пароля
+
+    function user_exists (
+        p_username      in   varchar2,
+        p_table_name    in   varchar2,
+        p_column_name   in   varchar2
+    ) return boolean; -- Функция проверки существования пользователя
+
+    function auth_func (
+        p_username       in   varchar2,
+        p_password       in   varchar2
+        --p_table_name     in   varchar2,
+        --p_username_col   in   varchar2,
+        --p_password_col   in   varchar2
+    ) return boolean; -- Функция аутентификации пользователя
+
+end user_service;
+/
+
+create or replace package body user_service as
+
+    -- Функция хэширования пароля
+    function hash_function(p_password varchar2) return varchar2 is
+        hashed_password varchar2(4000);
+    begin
+        hashed_password := rawtohex(dbms_crypto.hash(utl_raw.cast_to_raw(p_password), dbms_crypto.hash_sh256));
+        return hashed_password;
+    end;
+
+    -- Функция проверки существования пользователя
+    function user_exists(p_username in varchar2, p_table_name in varchar2, p_column_name in varchar2) return boolean is
+        user_count number;
+    begin
+        -- Проверка имени таблицы и столбца
+        if not regexp_like(p_table_name, '^[a-zA-Z0-9_]+$') or not regexp_like(p_column_name, '^[a-zA-Z0-9_]+$') then
+            raise_application_error(-20001, 'Недопустимое имя таблицы или столбца');
+        end if;
+
+        execute immediate 
+            'SELECT COUNT(*) FROM ' || p_table_name || ' WHERE LOWER(' || p_column_name || ') = LOWER(:1)'
+        into user_count
+        using p_username;
+
+        return user_count > 0;
+    end;
+
+    -- Функция аутентификации пользователя
+    function auth_func(
+        p_username      in varchar2,
+        p_password      in varchar2
+        --p_table_name    in varchar2,
+        --p_username_col  in varchar2,
+        --p_password_col  in varchar2
+    ) return boolean is
+        stored_hash    varchar2(4000);
+        input_hash     varchar2(4000);
+    begin
+        -- Проверка имен таблицы и колонок
+        if not regexp_like(p_table_name, '^[a-zA-Z0-9_]+$') or 
+           not regexp_like(p_username_col, '^[a-zA-Z0-9_]+$') or 
+           not regexp_like(p_password_col, '^[a-zA-Z0-9_]+$') then
+            raise_application_error(-20001, 'Недопустимое имя таблицы или столбца');
+        end if;
+
+        -- Проверка, существует ли пользователь
+        if not user_exists(p_username, p_table_name, p_username_col) then
+            return false;    
+        end if;
+
+        -- Получение хэша пароля из базы
+        execute immediate 
+            'SELECT ' || p_password_col || ' FROM ' || p_table_name || 
+            ' WHERE LOWER(' || p_username_col || ') = LOWER(:1)'
+        into stored_hash
+        using p_username;
+
+        -- Генерация хэша введенного пароля
+        input_hash := hash_function(p_password);
+
+        -- Сравнение хэшей
+        return stored_hash = input_hash;
+    exception
+        when no_data_found then
+            return false;
+        when others then
+            return false;
+    end;
+
+    -- Процедура регистрации пользователя
+    procedure reg_user(
+        p_username      in varchar2,
+        p_password      in varchar2,
+        p_table_name    in varchar2,
+        p_username_col  in varchar2,
+        p_password_col  in varchar2
+    ) is
+        hashed_password varchar2(4000);
+    begin
+        -- Проверка имен таблицы и колонок
+        if not regexp_like(p_table_name, '^[a-zA-Z0-9_]+$') or 
+           not regexp_like(p_username_col, '^[a-zA-Z0-9_]+$') or 
+           not regexp_like(p_password_col, '^[a-zA-Z0-9_]+$') then
+            raise_application_error(-20001, 'Недопустимое имя таблицы или столбца');
+        end if;
+
+        -- Проверка, существует ли пользователь
+        if user_exists(p_username, p_table_name, p_username_col) then
+            raise_application_error(-20002, 'User already exists');
+        end if;
+
+        -- Хэширование пароля
+        hashed_password := hash_function(p_password);
+
+        -- Вставка пользователя
+        execute immediate 
+            'INSERT INTO ' || p_table_name || ' (' || p_username_col || ', ' || p_password_col || ') VALUES (:1, :2)'
+        using p_username, hashed_password;
+
+        commit;
+    exception
+        when others then
+            rollback;
+            raise;
+    end;
+
+end user_service;
