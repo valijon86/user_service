@@ -1,7 +1,7 @@
 create or replace package user_service is
     p_table_name varchar2(200) := 'pr_users';
-    p_username_col varchar2(200);
-    p_password_col varchar2(200);
+    p_username_col varchar2(200) := 'username';
+    p_password_col varchar2(200) := 'password';
     procedure reg_user (
         p_username       in   varchar2,
         p_password       in   varchar2,
